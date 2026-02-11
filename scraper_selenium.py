@@ -18,6 +18,8 @@ from tkinter import ttk, messagebox, filedialog
 import threading
 import re
 import json
+import traceback
+from selenium.webdriver.common.keys import Keys
 
 
 class InstagramSeleniumScraper:
@@ -57,7 +59,7 @@ class InstagramSeleniumScraper:
         edge_options.add_argument("--no-sandbox")
         edge_options.add_argument("--disable-gpu")
         edge_options.add_argument("--window-size=1920,1080")
-        edge_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0")
+        edge_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0")
 
         # Скриване на грешки и логове
         edge_options.add_argument("--log-level=3")  # Само фатални грешки
@@ -117,7 +119,7 @@ class InstagramSeleniumScraper:
                         cookie_accepted = True
                         time.sleep(1)
                         break
-                    except:
+                    except (Exception,):
                         continue
 
                 if not cookie_accepted:
@@ -130,8 +132,6 @@ class InstagramSeleniumScraper:
 
             # Find active field (already focused after cookie banner)
             self._log("⏳ Clicking on first field...")
-
-            from selenium.webdriver.common.keys import Keys
 
             # Find input fields
             try:
@@ -195,7 +195,7 @@ class InstagramSeleniumScraper:
                     self._log("⏳ Trying Enter from active field...")
                     active = self.driver.switch_to.active_element
                     active.send_keys(Keys.ENTER)
-                except:
+                except (Exception,):
                     pass
                 return False
 
@@ -207,7 +207,7 @@ class InstagramSeleniumScraper:
                 error_element = self.driver.find_element(By.XPATH, "//*[contains(text(), 'Sorry') or contains(text(), 'incorrect')]")
                 self._log("✗ Error: Invalid username or password!")
                 return False
-            except:
+            except (Exception,):
                 pass  # No error - good
 
             # Check for "Save Your Login Info" and skip
@@ -234,11 +234,11 @@ class InstagramSeleniumScraper:
                         self._log("✓ Skipped 'Save Login Info'")
                         time.sleep(2)
                         break
-                    except:
+                    except (Exception,):
                         continue
                 if not clicked:
                     self._log("ℹ️ No 'Save Login Info' prompt")
-            except:
+            except (Exception,):
                 self._log("ℹ️ No 'Save Login Info' prompt")
 
             # Check for "Turn on Notifications" and skip
@@ -261,11 +261,11 @@ class InstagramSeleniumScraper:
                         self._log("✓ Skipped 'Notifications'")
                         time.sleep(2)
                         break
-                    except:
+                    except (Exception,):
                         continue
                 if not clicked:
                     self._log("ℹ️ No 'Notifications' prompt")
-            except:
+            except (Exception,):
                 self._log("ℹ️ No 'Notifications' prompt")
 
             self._log("✓ Login successful!")
@@ -273,7 +273,6 @@ class InstagramSeleniumScraper:
 
         except Exception as e:
             self._log(f"✗ Login error: {e}")
-            import traceback
             self._log(f"Details: {traceback.format_exc()}")
             return False
 
@@ -351,7 +350,7 @@ class InstagramSeleniumScraper:
                     try:
                         source = video.find_element(By.TAG_NAME, "source")
                         src = source.get_attribute('src')
-                    except:
+                    except (Exception,):
                         pass
 
                 if debug and src:
@@ -373,9 +372,9 @@ class InstagramSeleniumScraper:
                         video_url = self._extract_reel_from_page_source(debug=debug)
                         if video_url:
                             return video_url, 'video'
-                    except:
+                    except (Exception,):
                         pass
-        except:
+        except (Exception,):
             pass
 
         # Търсим всички img елементи на страницата
@@ -444,13 +443,99 @@ class InstagramSeleniumScraper:
                             if debug:
                                 self._log(f"  [DEBUG] От srcset: {last_src[:70]}...")
                             return last_src, 'image'
-        except:
+        except (Exception,):
             pass
 
         if debug:
             self._log("  [DEBUG] Нищо не е намерено!")
 
         return None, None
+
+    def _extract_post_description(self, debug=False):
+        """Извлича описанието (caption) от текущо отворен пост"""
+        try:
+            # Метод 1: Директно от DOM - h1 елемент в div._a9zr
+            # Структурата на поста е:
+            #   ul._a9z6 > div > li._a9zj > div._a9zm > div._a9zo > div._a9zr
+            #     ├── h2 (съдържа username линк)
+            #     ├── div > h1._ap3a._aaco._aacu._aacx._aad7._aade (CAPTION)
+            #     └── div > span > time (дата)
+            # ВАЖНО: Коментарите също имат div._a9zr но с h3 и span._ap3a
+            # Затова таргетираме САМО h1 (не span) за caption на поста
+
+            # Първо опитваме най-точния селектор: h1 в първия _a9zr (поста)
+            # ul._a9z6 е контейнерът на поста (не _a9ym който е за коментари)
+            caption_selectors = [
+                # Точен: h1 в поста (ul._a9z6), не в коментарите (ul._a9ym)
+                "//ul[contains(@class, '_a9z6')]//div[contains(@class, '_a9zr')]//h1[contains(@class, '_ap3a') and contains(@class, '_aade')]",
+                # Fallback: първият h1 с тези класове на страницата
+                "//h1[contains(@class, '_ap3a') and contains(@class, '_aaco') and contains(@class, '_aacu') and contains(@class, '_aacx') and contains(@class, '_aad7') and contains(@class, '_aade')]",
+                # По-общ: h1 в div._a9zr (постът винаги е първият)
+                "//div[contains(@class, '_a9zr')]//h1[contains(@class, '_ap3a')]",
+                # Най-общ h1 fallback
+                "//h1[contains(@class, '_ap3a')]",
+            ]
+
+            for selector in caption_selectors:
+                try:
+                    elements = self.driver.find_elements(By.XPATH, selector)
+                    for elem in elements:
+                        text = elem.text.strip()
+                        if text and len(text) > 5:
+                            if debug:
+                                self._log(f"  [DEBUG] Description от DOM (h1): {text[:60]}...")
+                            return text
+                except (Exception,):
+                    continue
+
+            # Метод 2: Търсене в meta tag (og:description) като fallback
+            try:
+                meta = self.driver.find_element(By.XPATH, "//meta[@property='og:description']")
+                content = meta.get_attribute('content') or ''
+                if content:
+                    # og:description обикновено е във формат: "X Likes, Y Comments - USERNAME on Instagram: "CAPTION""
+                    match = re.search(r':\s*["\u201c](.+)["\u201d]\s*$', content, re.DOTALL)
+                    if match:
+                        description = match.group(1).strip()
+                        if debug:
+                            self._log(f"  [DEBUG] Description от meta tag: {description[:60]}...")
+                        return description
+                    if debug:
+                        self._log(f"  [DEBUG] Description от meta (raw): {content[:60]}...")
+                    return content
+            except (Exception,):
+                pass
+
+            # Метод 3: Търсене в page source чрез JSON
+            try:
+                page_source = self.driver.page_source
+                caption_patterns = [
+                    r'"caption"\s*:\s*\{[^}]*"text"\s*:\s*"([^"]{5,})"',
+                    r'"edge_media_to_caption"\s*:\s*\{"edges"\s*:\s*\[\s*\{\s*"node"\s*:\s*\{\s*"text"\s*:\s*"([^"]+)"',
+                ]
+                for pattern in caption_patterns:
+                    match = re.search(pattern, page_source)
+                    if match:
+                        description = match.group(1)
+                        # Decode JSON escape sequences properly (handles \uXXXX, \n, \t, etc.)
+                        try:
+                            description = json.loads(f'"{description}"')
+                        except (json.JSONDecodeError, ValueError):
+                            pass  # Keep original string if JSON decode fails
+                        if debug:
+                            self._log(f"  [DEBUG] Description от JSON: {description[:60]}...")
+                        return description
+            except (Exception,):
+                pass
+
+            if debug:
+                self._log("  [DEBUG] Не е намерено описание за поста")
+            return None
+
+        except Exception as e:
+            if debug:
+                self._log(f"  [DEBUG] Грешка при извличане на описание: {e}")
+            return None
 
     @staticmethod
     def extract_username_from_url(url_or_username):
@@ -535,7 +620,7 @@ class InstagramSeleniumScraper:
             # 🔒 Security: Verify the path is within download_folder
             profile_folder = os.path.abspath(profile_folder)
             download_folder_abs = os.path.abspath(self.download_folder)
-            if not profile_folder.startswith(download_folder_abs):
+            if not profile_folder.startswith(download_folder_abs + os.sep):
                 raise ValueError(f"Security error: Attempted path traversal detected!")
 
             images_folder = os.path.join(profile_folder, "images")
@@ -547,6 +632,7 @@ class InstagramSeleniumScraper:
             # Download media
             total_images = 0
             total_videos = 0
+            total_descriptions = 0
 
             for idx, post_url in enumerate(image_links, 1):
                 try:
@@ -558,6 +644,22 @@ class InstagramSeleniumScraper:
                     # Open post
                     self.driver.get(post_url)
                     time.sleep(random.uniform(2, 4))
+
+                    # Fix #12: Detect rate limiting / challenge pages
+                    page_source_check = self.driver.page_source.lower()
+                    if 'challenge' in page_source_check or 'suspicious' in page_source_check:
+                        self._log("⚠ Instagram challenge/captcha detected! Waiting 60s before retry...")
+                        time.sleep(60)
+                        self.driver.get(post_url)
+                        time.sleep(random.uniform(3, 5))
+                    elif 'login' in self.driver.current_url and '/p/' not in self.driver.current_url and '/reel/' not in self.driver.current_url:
+                        self._log("⚠ Redirected to login — possible rate limit. Waiting 120s...")
+                        time.sleep(120)
+                        self.driver.get(post_url)
+                        time.sleep(random.uniform(3, 5))
+
+                    # Extract description from post
+                    description = self._extract_post_description(debug=True)
 
                     # Find media - including carousel (slideshow)
                     try:
@@ -588,10 +690,16 @@ class InstagramSeleniumScraper:
                                 )
                                 if next_button.is_displayed():
                                     next_button.click()
-                                    time.sleep(1)  # Wait for animation
+                                    time.sleep(1.5)  # Wait for animation
+
+                                    # Fix #5: Retry if same URL found (animation not finished)
+                                    retry_url, retry_type = self._find_post_media(debug=False, is_reel=is_reel)
+                                    if retry_url and retry_url in seen_urls:
+                                        # Same media — wait more and retry once
+                                        time.sleep(1.5)
                                 else:
                                     break
-                            except:
+                            except (Exception,):
                                 # No Next button - this is the last/only media
                                 break
 
@@ -601,6 +709,37 @@ class InstagramSeleniumScraper:
 
                         # Download all found media
                         if post_media:
+                            # Determine target parent folder based on media type
+                            # If any video is present (reel/video post) -> videos/, otherwise -> images/
+                            has_video = any(mt == 'video' for _, mt in post_media)
+                            parent_folder = videos_folder if has_video else images_folder
+
+                            # Create post subfolder inside images/ or videos/
+                            post_folder_name = f"post_{idx}"
+                            post_folder = os.path.join(parent_folder, post_folder_name)
+
+                            # 🔒 Security: Verify the path is within profile_folder
+                            post_folder_abs = os.path.abspath(post_folder)
+                            profile_folder_abs = os.path.abspath(profile_folder)
+                            if not post_folder_abs.startswith(profile_folder_abs + os.sep):
+                                self._log(f"⚠ Security: Skipping post with invalid path")
+                                continue
+
+                            # Fix #15: Overwrite protection — skip if folder already exists with content
+                            if os.path.exists(post_folder) and os.listdir(post_folder):
+                                self._log(f"⏭ Skipping post {idx} — already downloaded in {post_folder_name}/")
+                                continue
+
+                            Path(post_folder).mkdir(parents=True, exist_ok=True)
+
+                            # Save description.txt in the post subfolder
+                            if description:
+                                desc_filepath = os.path.join(post_folder, "description.txt")
+                                with open(desc_filepath, 'w', encoding='utf-8') as f:
+                                    f.write(description)
+                                total_descriptions += 1
+                                self._log(f"📝 Saved description ({len(description)} chars)")
+
                             headers = {
                                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                                 'Referer': 'https://www.instagram.com/'
@@ -611,41 +750,40 @@ class InstagramSeleniumScraper:
 
                             for media_idx, (media_url, media_type) in enumerate(post_media, 1):
                                 try:
-                                    # 🔒 Security: Enable SSL verification and set timeout
-                                    media_data = requests.get(
-                                        media_url,
-                                        headers=headers,
-                                        verify=True,  # SSL certificate verification
-                                        timeout=30    # Prevent hanging requests
-                                    ).content
-
-                                    # Determine extension and target folder
+                                    # Determine extension
                                     if media_type == 'video':
                                         ext = '.mp4'
-                                        target_folder = videos_folder
                                     else:
                                         ext = '.jpg'
-                                        target_folder = images_folder
 
-                                    # Filename - if carousel add letter (a, b, c...)
+                                    # Fix #6: Filename - use zero-padded numbers for carousel (safe for any count)
                                     # 🔒 Security: Use safe_username for filename
                                     if len(post_media) > 1:
-                                        suffix = chr(96 + media_idx)  # a, b, c, d...
-                                        filename = f"{safe_username}_{idx}{suffix}{ext}"
+                                        filename = f"{safe_username}_{idx}_{media_idx:02d}{ext}"
                                     else:
                                         filename = f"{safe_username}_{idx}{ext}"
 
-                                    filepath = os.path.join(target_folder, filename)
+                                    filepath = os.path.join(post_folder, filename)
 
-                                    # 🔒 Security: Verify filepath is within target folder
+                                    # 🔒 Security: Verify filepath is within post folder
                                     filepath_abs = os.path.abspath(filepath)
-                                    target_folder_abs = os.path.abspath(target_folder)
-                                    if not filepath_abs.startswith(target_folder_abs):
+                                    if not filepath_abs.startswith(post_folder_abs + os.sep):
                                         self._log(f"⚠ Security: Skipping file with invalid path: {filepath}")
                                         continue
 
-                                    with open(filepath, 'wb') as f:
-                                        f.write(media_data)
+                                    # Fix #7 & #8: Stream download to avoid loading entire file in RAM
+                                    # timeout=(connect_timeout, read_timeout)
+                                    with requests.get(
+                                        media_url,
+                                        headers=headers,
+                                        verify=True,
+                                        timeout=(10, 120),
+                                        stream=True
+                                    ) as response:
+                                        response.raise_for_status()
+                                        with open(filepath, 'wb') as f:
+                                            for chunk in response.iter_content(chunk_size=8192):
+                                                f.write(chunk)
 
                                     # Актуализиране на броячите
                                     if media_type == 'video':
@@ -664,16 +802,17 @@ class InstagramSeleniumScraper:
                                     self._log(f"⚠ Download error: {e}")
 
                             # Лог съобщение
+                            category = "videos" if has_video else "images"
                             if len(post_media) > 1:
                                 parts = []
                                 if images_count > 0:
                                     parts.append(f"{images_count} images")
                                 if videos_count > 0:
                                     parts.append(f"{videos_count} videos")
-                                self._log(f"✓ Downloaded {' and '.join(parts)} from carousel (post {idx}/{len(image_links)}) | Total: {total_images} images, {total_videos} videos")
+                                self._log(f"✓ Downloaded {' and '.join(parts)} from carousel → {category}/{post_folder_name}/ (post {idx}/{len(image_links)}) | Total: {total_images} img, {total_videos} vid")
                             else:
                                 media_type_bg = "видео" if post_media[0][1] == 'video' else "снимка"
-                                self._log(f"✓ Downloaded {media_type_bg} (post {idx}/{len(image_links)}) | Total: {total_images} images, {total_videos} videos")
+                                self._log(f"✓ Downloaded {media_type_bg} → {category}/{post_folder_name}/ (post {idx}/{len(image_links)}) | Total: {total_images} img, {total_videos} vid")
                         else:
                             self._log(f"⚠ Couldn't find media in post {idx}")
 
@@ -687,7 +826,7 @@ class InstagramSeleniumScraper:
 
                 # Прогрес съобщение на всеки 10 поста
                 if idx % 10 == 0:
-                    self._log(f"\n📊 Progress: {idx}/{len(image_links)} posts | {total_images} images, {total_videos} videos\n")
+                    self._log(f"\n📊 Progress: {idx}/{len(image_links)} posts | {total_images} images, {total_videos} videos, {total_descriptions} descriptions\n")
 
             # Финално съобщение
             parts = []
@@ -695,9 +834,12 @@ class InstagramSeleniumScraper:
                 parts.append(f"{total_images} images")
             if total_videos > 0:
                 parts.append(f"{total_videos} videos")
+            if total_descriptions > 0:
+                parts.append(f"{total_descriptions} descriptions")
 
             if parts:
                 self._log(f"\n✅ Success! Downloaded {' and '.join(parts)} in '{profile_folder}'")
+                self._log(f"📂 Each post is saved in its own subfolder (post_1/, post_2/, ...)")
             else:
                 self._log(f"\n⚠ No posts found")
 
@@ -729,9 +871,6 @@ class SeleniumScraperGUI:
 
         style = ttk.Style()
         style.theme_use('clam')
-
-        style = ttk.Style()
-        style.theme_use("clam")
 
         style.configure(
             "Modern.TEntry",
@@ -995,6 +1134,9 @@ class SeleniumScraperGUI:
             messagebox.showerror("Error", "Invalid delay values!")
             return
 
+        # 🔒 Fix #3: Sync folder_var with download_folder (manual edits in the text field)
+        self.download_folder = self.folder_var.get().strip() or "downloads"
+
         # Start
         self.is_downloading = True
         self.download_btn.config(state=tk.DISABLED, text="⏳ Downloading...")
@@ -1022,7 +1164,17 @@ class SeleniumScraperGUI:
             self.scraper._init_driver()
 
             # Login (REQUIRED)
-            if not self.scraper.login(username, password):
+            login_success = False
+            try:
+                login_success = self.scraper.login(username, password)
+            finally:
+                # Fix #1-2: Clear credentials from memory immediately after login
+                password = None  # noqa: F841
+                username = None  # noqa: F841
+                # Clear GUI password field after login attempt
+                self.root.after(0, lambda: self.login_password_var.set(""))
+
+            if not login_success:
                 self.root.after(0, lambda: messagebox.showerror("Error", "Login failed!"))
                 return
 
@@ -1046,7 +1198,7 @@ class SeleniumScraperGUI:
             self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
 
         finally:
-            # Close browser
+            # Fix #9: Always close browser (even on login failure)
             if self.scraper:
                 self.scraper.close()
 
