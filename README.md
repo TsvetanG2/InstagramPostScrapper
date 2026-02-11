@@ -1,3 +1,9 @@
+![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
+[![Download](https://img.shields.io/badge/Download_Installer-darkgreen.svg)](https://github.com/TsvetanG2/InstagramPostScrapper/raw/refs/heads/main/dist_installer/InstagramPostScrapperSetup_0.0.12.exe)
+
+
 # Instagram Scraper
 
 A simple tool for downloading photos from Instagram profiles using Selenium with Microsoft Edge.
