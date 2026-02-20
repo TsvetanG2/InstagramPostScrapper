@@ -47,6 +47,45 @@ class InstagramSeleniumScraper:
         else:
             print(message)
 
+    def _is_challenge_page(self):
+        """
+        Проверява дали текущата страница е captcha/challenge.
+        Връща True само при реално блокиране, не при случайно срещане на думата в page source.
+        """
+        try:
+            current_url = self.driver.current_url.lower()
+
+            # Проверка 1: URL съдържа /challenge/ - това е сигурен признак
+            if '/challenge/' in current_url:
+                return True
+
+            # Проверка 2: URL съдържа /accounts/suspended/ или /accounts/login/
+            if '/accounts/suspended' in current_url:
+                return True
+
+            # Проверка 3: Търсим специфични DOM елементи за challenge
+            challenge_selectors = [
+                "//form[contains(@action, 'challenge')]",
+                "//div[contains(@class, 'challenge')]",
+                "//*[contains(text(), 'Suspicious Login Attempt')]",
+                "//*[contains(text(), 'We Detected An Unusual Login Attempt')]",
+                "//*[contains(text(), 'Confirm Your Identity')]",
+                "//*[contains(text(), 'Verify Your Account')]",
+            ]
+
+            for selector in challenge_selectors:
+                try:
+                    elements = self.driver.find_elements(By.XPATH, selector)
+                    if elements and any(el.is_displayed() for el in elements):
+                        return True
+                except (Exception,):
+                    continue
+
+            return False
+
+        except Exception:
+            return False
+
     def _init_driver(self):
         """Инициализира Edge driver"""
         edge_options = Options()
@@ -572,17 +611,29 @@ class InstagramSeleniumScraper:
             # Open profile
             profile_url = f"https://www.instagram.com/{profile_username}/"
             self.driver.get(profile_url)
-            time.sleep(random.uniform(3, 5))
+            time.sleep(random.uniform(4, 7))  # Longer initial wait
 
-            # Scroll down to load images
-            self._log("📜 Loading images...")
+            # Check for challenge/login redirect before starting
+            if self._is_challenge_page():
+                self._log("⚠ Challenge detected on profile page! Waiting 90s...")
+                time.sleep(90)
+                self.driver.get(profile_url)
+                time.sleep(random.uniform(5, 8))
+
+            # Scroll down to load images with human-like behavior
+            self._log("📜 Loading images (human-like scrolling)...")
 
             # Find all images
             image_links = []
-            scroll_pause = 2
             last_height = self.driver.execute_script("return document.body.scrollHeight")
+            no_change_count = 0  # Track consecutive scrolls without new content
+            max_no_change = 5  # Allow up to 5 retries before giving up
+            last_post_count = 0
+            scroll_iteration = 0
 
             while True:
+                scroll_iteration += 1
+
                 # Find all posts - /p/ (images) and /reel/ (videos)
                 posts = self.driver.find_elements(By.XPATH, "//a[contains(@href, '/p/') or contains(@href, '/reel/')]")
 
@@ -591,22 +642,73 @@ class InstagramSeleniumScraper:
                     if href and href not in image_links:
                         image_links.append(href)
 
-                self._log(f"📊 Found {len(image_links)} posts...")
+                current_post_count = len(image_links)
+
+                # Log less frequently to reduce spam (every 5 iterations or when count changes significantly)
+                if scroll_iteration == 1 or scroll_iteration % 5 == 0 or current_post_count != last_post_count:
+                    self._log(f"📊 Found {current_post_count} posts...")
 
                 # Check if we reached the limit
-                if max_posts and len(image_links) >= max_posts:
+                if max_posts and current_post_count >= max_posts:
                     image_links = image_links[:max_posts]
                     break
 
+                # Human-like scrolling: scroll in smaller steps with random pauses
+                viewport_height = self.driver.execute_script("return window.innerHeight")
+                current_scroll = self.driver.execute_script("return window.pageYOffset")
+
+                # Random scroll distance (50-90% of viewport)
+                scroll_distance = int(viewport_height * random.uniform(0.5, 0.9))
+
+                # Sometimes scroll less for more natural behavior
+                if random.random() < 0.2:
+                    scroll_distance = int(scroll_distance * 0.5)
+
                 # Scroll down
-                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(scroll_pause)
+                new_scroll_position = current_scroll + scroll_distance
+                self.driver.execute_script(f"window.scrollTo(0, {new_scroll_position});")
+
+                # Random pause between scrolls (2-5 seconds)
+                time.sleep(random.uniform(2, 5))
+
+                # Occasionally scroll up a tiny bit (simulates human reading)
+                if random.random() < 0.15:
+                    self.driver.execute_script(f"window.scrollBy(0, -{random.randint(50, 150)});")
+                    time.sleep(random.uniform(0.5, 1.5))
+
+                # Check for rate limiting during scroll
+                if scroll_iteration % 10 == 0:
+                    if self._is_challenge_page():
+                        self._log("⚠ Rate limit detected during scroll! Waiting 60s...")
+                        time.sleep(60)
 
                 # Check if there's more content
                 new_height = self.driver.execute_script("return document.body.scrollHeight")
-                if new_height == last_height:
-                    break
+
+                # Check both height AND post count for more accurate detection
+                if new_height == last_height and current_post_count == last_post_count:
+                    no_change_count += 1
+
+                    if no_change_count >= max_no_change:
+                        self._log("📍 Reached end of profile (no more content after retries)")
+                        break
+
+                    self._log(f"⏳ No new content, retry {no_change_count}/{max_no_change}...")
+
+                    # Scroll to absolute bottom and wait longer
+                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(random.uniform(4, 7))
+
+                    # Try scrolling up and back down to trigger lazy loading
+                    self.driver.execute_script("window.scrollBy(0, -800);")
+                    time.sleep(random.uniform(1, 2))
+                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(random.uniform(5, 8))
+                else:
+                    no_change_count = 0  # Reset counter when new content is found
+
                 last_height = new_height
+                last_post_count = current_post_count
 
             self._log(f"✓ Found total {len(image_links)} posts")
 
@@ -646,8 +748,7 @@ class InstagramSeleniumScraper:
                     time.sleep(random.uniform(2, 4))
 
                     # Fix #12: Detect rate limiting / challenge pages
-                    page_source_check = self.driver.page_source.lower()
-                    if 'challenge' in page_source_check or 'suspicious' in page_source_check:
+                    if self._is_challenge_page():
                         self._log("⚠ Instagram challenge/captcha detected! Waiting 60s before retry...")
                         time.sleep(60)
                         self.driver.get(post_url)
@@ -695,8 +796,16 @@ class InstagramSeleniumScraper:
                                     # Fix #5: Retry if same URL found (animation not finished)
                                     retry_url, retry_type = self._find_post_media(debug=False, is_reel=is_reel)
                                     if retry_url and retry_url in seen_urls:
-                                        # Same media — wait more and retry once
-                                        time.sleep(1.5)
+                                        # Same media — wait more and retry
+                                        time.sleep(2.0)
+                                        retry_url, retry_type = self._find_post_media(debug=False, is_reel=is_reel)
+                                        # If still same URL after retries, likely blocked - skip this carousel slide
+                                        if retry_url and retry_url in seen_urls:
+                                            self._log(f"  ⚠ Carousel slide {slide_num}: same media detected, skipping...")
+                                            continue
+                                        elif retry_url:
+                                            seen_urls.add(retry_url)
+                                            post_media.append((retry_url, retry_type))
                                 else:
                                     break
                             except (Exception,):
