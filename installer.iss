@@ -7,7 +7,7 @@
 ;     scraper_selenium.py
 
 #define MyAppName "Instagram Post Scrapper"
-#define MyAppVersion "0.0.1"
+#define MyAppVersion "0.0.2v"
 #define MyAppPublisher "Tsvetan Gerginov"
 #define MyAppURL "https://www.tsvetangerginov.com/"
 #define MyAppExeName "InstagramScrapper.exe"
