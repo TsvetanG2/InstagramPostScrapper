@@ -3,6 +3,16 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 [![Download](https://img.shields.io/badge/Download_Installer-darkgreen.svg)](https://github.com/TsvetanG2/InstagramPostScrapper/raw/refs/heads/main/dist_installer/InstagramPostScrapperSetup_0.0.2v.exe)
 
+# Latest Update 0.0.2v:
+- New method _is_challenge_page() — more reliable recognition of captcha/challenge pages through URL checks + DOM selectors (instead of simply searching the page source)
+- Human-like scrolling — instead of directly scrolling to the bottom:
+- Scrolls in random steps (50-90% of viewport)
+- Sometimes scrolls up (simulates reading)
+- Random pauses between 2-5 seconds
+- Better detection of profile end — 5 retries with scroll up/down before stopping (instead of 1 attempt)
+- Challenge detection when scrolling — check every 10 scrolls for rate limit
+- Improved carousel retry — additional retry for duplicate URL + skip if the slide is blocked
+- Longer initial waits — 4-7s when opening a profile (was 3-5s)
 
 # Instagram Scraper
 
